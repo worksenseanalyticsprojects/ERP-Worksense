@@ -24,35 +24,105 @@ By leveraging Google Apps Script (GAS) as a serverless execution environment and
 The application uses an optimized compilation pipeline that bundles a React Single Page Application (SPA) into a single HTML file deployed directly onto Google Apps Script. 
 
 ```mermaid
-graph TD
-    subgraph Client_Side["Client Environment (Browser)"]
-        A["React SPA (State Store)"] -->|User Action| B["Vite UI Component Tree"]
-        B -->|Local Action| C["Diagnostic Console"]
-        A -->|API Call| D["gasClient Wrapper"]
+flowchart TB
+    subgraph Client_App["Client-Side Architecture (React Single Page Application)"]
+        subgraph View_Layers["UI Component Tree (src/pages/)"]
+            UI_Dash["Dashboard (Overview & KPIs)"]
+            UI_Anal["Analytics (Local Drill-down)"]
+            UI_Sales["Sales Orders (Management)"]
+            UI_Prod["Products (Inventory)"]
+            UI_Users["Team Access (RBAC UI)"]
+            UI_Set["Settings (Common Meta Form)"]
+            UI_Sup["Support (Support Coordinates)"]
+        end
+
+        subgraph State_Engine["State & Cache Layer (src/utils/store.js)"]
+            Store["Subscription State Store"]
+            LocalPref["Local Storage Preferences (sidebar, density)"]
+            SessionUser["Session Storage (Active User Credentials)"]
+            EntityCache["Performance Cache (Products, Orders, Ledger, Logs)"]
+        end
+
+        subgraph Client_Bridge["Client Bridge Layer (src/api/)"]
+            GasClient["gasClient.js API Adapter"]
+            MockStore["Mock In-Memory Store (Offline Development Mode)"]
+        end
+        
+        UI_Console["Diagnostic Terminal (src/components/errorConsole.js)"]
     end
 
-    subgraph Build_Pipeline["CI/CD Compile Pipeline"]
-        E["Vite Bundler"] -->|Inline CSS/JS| F["dist/index.html"]
-        G["esbuild & Compiler Script"] -->|Merge modules| H["dist-gas/code.gs"]
-        F -->|Copy| I["dist-gas/webapp.html"]
-        H & I -->|clasp push| J["GAS Web App Endpoint"]
+    subgraph Compiler_CI["CI/CD Compilation & Pipeline (Nusa-Compiler)"]
+        ViteComp["Vite Bundler (vite.config.js)"]
+        ViteSingle["vite-plugin-singlefile"]
+        NusaComp["Nusa-Compiler (scripts/build-gas.mjs)"]
+        ClaspPush["Google clasp (clasp push)"]
     end
 
-    subgraph Server_Side["Server Environment (Google Cloud)"]
-        J -->|JSON-RPC Router| K["01-main.gs API Router"]
-        K -->|Authentication & RBAC Check| L["02-auth.gs & Modules"]
-        L -->|SpreadsheetApp API| M["Google Sheets Database Engine"]
+    subgraph Server_Core["Google Apps Script Serverless Core (gas-src/)"]
+        GetEndpoint["doGet(e) Entry Point"]
+        Router["01-main.gs API Gateway Router"]
+        AuthMid["02-auth.gs Authentication Middleware (RBAC Guards)"]
+        
+        subgraph Server_Modules["Database RPC Handlers (gas-src/modules/)"]
+            Mod_Prod["10-products.gs (Inventory Handler)"]
+            Mod_Sales["11-sales.gs (Orders/Archive Handlers)"]
+            Mod_Ledger["12-ledger.gs (Bookkeeping reconciliation)"]
+            Mod_Users["13-users.gs (Team management)"]
+            Mod_Logs["14-logs.gs (Diagnostic audit logs)"]
+        end
     end
 
-    subgraph Relational_Sheets["Relational Google Sheets Tables"]
-        M -->|Write/Read| N[("Products")]
-        M -->|Write/Read| O[("SalesOrders & Archives")]
-        M -->|Write/Read| P[("FinanceLedger & Archives")]
-        M -->|Write/Read| Q[("Users")]
-        M -->|Write/Read| R[("Settings & SystemLogs")]
+    subgraph Sheet_DB["Relational Spreadsheet Database (Google Sheets)"]
+        DbEngine["SpreadsheetApp Database Engine"]
+        
+        SetupSeed["00-setup.gs & 00-seeder.gs (Idempotent schema seeder)"]
+        
+        subgraph Sheet_Tables["Relational Google Sheets Tables"]
+            T_Prod[("Products Table")]
+            T_Orders[("SalesOrders Table")]
+            T_Arch_Ord[("SalesOrders_Archive Table")]
+            T_Ledger[("FinanceLedger Table")]
+            T_Arch_Led[("FinanceLedger_Archive Table")]
+            T_Users[("Users Table")]
+            T_Logs[("SystemLogs Table")]
+            T_Set[("Settings Table")]
+        end
     end
 
-    D -->|google.script.run| J
+    %% Client Relations
+    View_Layers -->|Subscribe/Mutate| Store
+    Store <-->|Sync| LocalPref & SessionUser & EntityCache
+    Store -->|Call API| GasClient
+    Store -.->|Catch Errors| UI_Console
+    GasClient <-->|Offline Bindings| MockStore
+
+    %% Compilation Relations
+    View_Layers & State_Engine & Client_Bridge -->|Compile| ViteComp
+    ViteComp -->|Inline Assets| ViteSingle
+    ViteSingle -->|Output single file| webapp_html["dist/index.html (renamed to webapp.html)"]
+
+    Server_Modules & Router & AuthMid -->|Concatenate modules| NusaComp
+    NusaComp -->|Output code| code_gs["dist-gas/code.gs"]
+    
+    webapp_html & code_gs -->|Deploy| ClaspPush
+
+    %% Server Relations
+    ClaspPush -->|Push to script| GetEndpoint
+    GetEndpoint -->|Serve index.html| View_Layers
+    
+    GasClient -->|google.script.run JSON-RPC| Router
+    Router -->|Validate Credentials| AuthMid
+    AuthMid -->|Delegate requests| Server_Modules
+    Server_Modules -->|Write/Read Query| DbEngine
+
+    %% Database Relations
+    SetupSeed -->|Validate & Seed Schema| DbEngine
+    DbEngine <-->|Products CRUD| T_Prod
+    DbEngine <-->|Sales Orders CRUD| T_Orders & T_Arch_Ord
+    DbEngine <-->|Double-Entry Bookkeeping| T_Ledger & T_Arch_Led
+    DbEngine <-->|RBAC Auth & Team Access| T_Users
+    DbEngine <-->|System Event logs| T_Logs
+    DbEngine <-->|Dynamic Meta Configs| T_Set
 ```
 
 ### 2.1 Compilation & Deployment Workflow
